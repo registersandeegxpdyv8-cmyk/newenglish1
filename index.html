@@ -395,6 +395,69 @@
       line-height: 1.5;
     }
 
+    .chat-thread {
+      min-height: 420px;
+      max-height: 620px;
+      overflow: auto;
+      background: #f1f4ef;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .chat-row {
+      display: flex;
+    }
+
+    .chat-row.me { justify-content: flex-end; }
+    .chat-row.coach { justify-content: flex-start; }
+
+    .bubble {
+      max-width: min(76%, 520px);
+      border-radius: 8px;
+      padding: 10px 12px;
+      line-height: 1.6;
+      background: #fff;
+      border: 1px solid var(--line);
+      white-space: pre-wrap;
+    }
+
+    .chat-row.me .bubble {
+      background: #dff0e8;
+      border-color: #bfddcf;
+    }
+
+    .voice-message {
+      min-width: 150px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .voice-message::before {
+      content: "▶";
+      display: inline-grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 999px;
+      background: rgba(47, 111, 115, .14);
+      color: var(--accent);
+      font-size: 12px;
+      flex: 0 0 auto;
+    }
+
+    .chat-meta {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
     .reading-text {
       white-space: pre-wrap;
       line-height: 1.9;
@@ -525,6 +588,8 @@
       .vocab-grid { grid-template-columns: 1fr; }
       .panel { padding: 12px; box-shadow: none; }
       .reading-text { font-size: 16px; min-height: 180px; padding: 12px; }
+      .chat-thread { min-height: 360px; max-height: 58vh; padding: 10px; }
+      .bubble { max-width: 86%; }
       .title-block h2 { font-size: 24px; }
       button { min-height: 42px; }
     }
@@ -651,8 +716,8 @@
             <div class="result feedback-list" id="pronFeedback"></div>
           </div>
           <div class="panel">
-            <h3>纠音记录</h3>
-            <div id="pronHistory" class="reading-text">还没有跟读记录。</div>
+            <h3>跟读对话</h3>
+            <div id="pronChat" class="chat-thread"></div>
           </div>
         </div>
       </section>
@@ -691,6 +756,10 @@
     let activeRecognition = null;
     let pronAttempts = 0;
     let holdStartedAt = 0;
+    let activeMediaRecorder = null;
+    let activeAudioChunks = [];
+    let pendingAudioUrl = "";
+    let pendingAudioDuration = 0;
     const initialLessons = Array.from({ length: TOTAL_LESSONS }, (_, index) => ({
       id: index + 1,
       title: `Lesson ${index + 1}`,
@@ -870,6 +939,7 @@
       }).join("") || `<p class="hint">这一课还没有单词。偶数课如果没有课文，就先把本课单词练熟。</p>`;
       $("pronWordSelect").innerHTML = words.map((word, index) => `<option value="${index}">${escapeHtml(word.en)} ${word.phonetic ? "/" + escapeHtml(word.phonetic) + "/" : ""}</option>`).join("");
       updatePronTarget();
+      renderPronChatIntro();
       document.querySelectorAll("[data-card-speak]").forEach((btn) => {
         btn.addEventListener("click", () => speak(item.words[Number(btn.dataset.cardSpeak)]?.en || ""));
       });
@@ -1251,14 +1321,18 @@
       const word = selectedPronWord();
       $("pronCustomText").value = word.en || "";
       updatePronTarget();
+      renderPronChatIntro();
     }
 
-    function beginVoiceHold(event) {
+    async function beginVoiceHold(event) {
       event.preventDefault();
       holdStartedAt = Date.now();
+      pendingAudioUrl = "";
+      pendingAudioDuration = 0;
       $("voiceHoldBtn").classList.add("recording");
       $("voiceHoldBtn").textContent = "正在听...松开结束";
       $("voiceStatus").textContent = "请开始读。";
+      await startAudioRecording();
       startPronPractice();
     }
 
@@ -1271,6 +1345,7 @@
       } else {
         $("voiceStatus").textContent = "已松开，正在整理纠音建议。";
       }
+      stopAudioRecording();
       stopPronPractice(false);
     }
 
@@ -1304,13 +1379,18 @@
         $("pronMeter").style.width = `${feedback.score}%`;
         $("pronFeedback").innerHTML = feedback.messages.map((msg) => `<div>${escapeHtml(msg)}</div>`).join("");
         $("pronFeedback").className = `result ${feedback.score >= 80 ? "ok" : "bad"} feedback-list`;
-        addPronHistory(word.en, best, feedback.score);
+        addPronExchange(word.en, best, feedback);
         $("voiceStatus").textContent = feedback.score >= 85 ? "这次不错，可以继续练下一句。" : "这次没听准，按住语音条再读一次。";
       };
       recognition.onerror = (event) => {
         $("pronFeedback").textContent = `没有听清：${event.error || "请检查麦克风权限"}`;
         $("pronFeedback").className = "result bad feedback-list";
         $("voiceStatus").textContent = "没有听清，按住后离手机近一点再读。";
+        setTimeout(() => {
+          const target = selectedPronTarget().en || "自定义跟读";
+          addVoiceBubble(target, pendingAudioUrl, pendingAudioDuration);
+          addCoachBubble(`这次我没有听清具体内容。\n你可以先点开自己的语音听一下：音量是否太小、尾音是否漏掉、是否读得太快。\n然后按住语音条再读一次。`);
+        }, 260);
       };
       recognition.start();
     }
@@ -1321,6 +1401,36 @@
         activeRecognition = null;
       }
       if (showStopped) $("pronFeedback").innerHTML += `<div>已停止跟读。</div>`;
+    }
+
+    async function startAudioRecording() {
+      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+        $("voiceStatus").textContent = "当前浏览器不支持录音回放，请用 Chrome 或 Edge。";
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        activeAudioChunks = [];
+        activeMediaRecorder = new MediaRecorder(stream);
+        activeMediaRecorder.ondataavailable = (event) => {
+          if (event.data?.size) activeAudioChunks.push(event.data);
+        };
+        activeMediaRecorder.onstop = () => {
+          const blob = new Blob(activeAudioChunks, { type: activeMediaRecorder.mimeType || "audio/webm" });
+          pendingAudioUrl = URL.createObjectURL(blob);
+          pendingAudioDuration = Math.max(1, Math.round((Date.now() - holdStartedAt) / 1000));
+          stream.getTracks().forEach((track) => track.stop());
+        };
+        activeMediaRecorder.start();
+      } catch {
+        $("voiceStatus").textContent = "麦克风权限没有打开，无法保存你的语音。";
+      }
+    }
+
+    function stopAudioRecording() {
+      if (activeMediaRecorder && activeMediaRecorder.state !== "inactive") {
+        activeMediaRecorder.stop();
+      }
     }
 
     function pronunciationFeedback(word, heard, alternatives) {
@@ -1338,9 +1448,46 @@
       return { score, messages };
     }
 
-    function addPronHistory(target, heard, score) {
-      const current = $("pronHistory").textContent === "还没有跟读记录。" ? "" : $("pronHistory").textContent + "\n";
-      $("pronHistory").textContent = `${current}${new Date().toLocaleTimeString()} 目标：${target} | 听到：${heard || "未识别"} | ${score}%`;
+    function renderPronChatIntro() {
+      const target = selectedPronTarget();
+      $("pronChat").innerHTML = "";
+      addCoachBubble(`跟读目标：${target.en || "请选择单词或输入句子"}\n先点“听标准音”，再按住下面的语音条读。`);
+    }
+
+    function addPronExchange(target, heard, feedback) {
+      setTimeout(() => {
+        addVoiceBubble(target, pendingAudioUrl, pendingAudioDuration);
+        addCoachBubble(feedback.messages.join("\n"));
+      }, 260);
+    }
+
+    function addCoachBubble(text) {
+      const row = document.createElement("div");
+      row.className = "chat-row coach";
+      row.innerHTML = `<div class="bubble">${escapeHtml(text)}<div class="chat-meta">${new Date().toLocaleTimeString()}</div></div>`;
+      $("pronChat").appendChild(row);
+      scrollPronChat();
+    }
+
+    function addVoiceBubble(target, audioUrl, duration) {
+      const row = document.createElement("div");
+      row.className = "chat-row me";
+      const playable = audioUrl ? "点击播放我的语音" : "语音未保存";
+      row.innerHTML = `<div class="bubble voice-message" data-audio="${escapeAttr(audioUrl || "")}">
+        <span>${escapeHtml(playable)} · ${duration || 0}s</span>
+        <div class="chat-meta">目标：${escapeHtml(target)}</div>
+      </div>`;
+      $("pronChat").appendChild(row);
+      row.querySelector("[data-audio]").addEventListener("click", (event) => {
+        const src = event.currentTarget.dataset.audio;
+        if (src) new Audio(src).play();
+      });
+      scrollPronChat();
+    }
+
+    function scrollPronChat() {
+      const box = $("pronChat");
+      box.scrollTop = box.scrollHeight;
     }
 
     function phoneticTips(phonetic, word) {
