@@ -485,6 +485,55 @@
       margin-bottom: 12px;
     }
 
+    .quiz-deck {
+      display: grid;
+      gap: 10px;
+      touch-action: pan-y;
+    }
+
+    .quiz-card.active-card {
+      min-height: 310px;
+      display: grid;
+      align-content: start;
+      gap: 10px;
+      margin-bottom: 0;
+    }
+
+    .grammar-item.active-card {
+      min-height: 310px;
+      display: grid;
+      align-content: start;
+      gap: 10px;
+    }
+
+    #pronWordSelect,
+    label[for="pronWordSelect"],
+    #useSelectedWordBtn {
+      display: none;
+    }
+
+    .quiz-card input {
+      min-height: 46px;
+      font-size: 17px;
+    }
+
+    .quiz-nav {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .quiz-nav span {
+      color: var(--muted);
+      text-align: center;
+      font-size: 13px;
+    }
+
+    .quiz-nav button:last-child {
+      justify-self: end;
+    }
+
     .quiz-card strong {
       display: block;
       margin-bottom: 8px;
@@ -512,6 +561,15 @@
 
     .grammar-item textarea {
       min-height: 70px;
+    }
+
+    .grammar-prompt {
+      white-space: pre-wrap;
+      line-height: 1.55;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 10px;
     }
 
     .grammar-actions {
@@ -583,7 +641,10 @@
       .grid { grid-template-columns: 1fr; }
       .topbar { flex-direction: column; }
       .actions { justify-content: flex-start; }
-      .stats { grid-template-columns: 1fr; }
+      .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+      .stat { padding: 8px; }
+      .stat b { font-size: 18px; }
+      .stat span { font-size: 11px; }
       .word-row { grid-template-columns: 1fr; }
       .vocab-grid { grid-template-columns: 1fr; }
       .panel { padding: 12px; box-shadow: none; }
@@ -673,7 +734,7 @@
           <div class="panel">
             <div class="tools-row">
               <h3>本课语法</h3>
-              <button id="speakGrammarBtn" class="icon-btn" title="朗读语法例句">▶</button>
+              <button id="speakGrammarBtn" class="icon-btn" title="朗读语法讲解">▶</button>
             </div>
             <div id="grammarDisplay" class="reading-text"></div>
           </div>
@@ -725,8 +786,8 @@
       <section id="tab-grammar" class="tab-page hidden">
         <div class="panel">
           <div class="tools-row">
-            <button id="addGrammarBtn">添加语法题</button>
-            <button id="addTranslateBtn">翻译句子</button>
+            <button id="addGrammarBtn" class="primary">生成练习</button>
+            <button id="addTranslateBtn" class="hidden">翻译句子</button>
             <button id="checkGrammarBtn" class="primary">批改语法</button>
           </div>
           <div class="grammar-list" id="grammarList"></div>
@@ -776,6 +837,13 @@
     let lessons = loadData();
     let currentId = 1;
     let activeTab = "read";
+    let activeQuizWords = [];
+    let activeQuizMode = "cn-to-en";
+    let activeQuizIndex = 0;
+    let quizTouchStartX = 0;
+    let activeGrammarIndex = 0;
+    let grammarTouchStartX = 0;
+    let grammarPracticeActive = false;
 
     const $ = (id) => document.getElementById(id);
 
@@ -954,38 +1022,74 @@
 
     function renderGrammar() {
       const item = lesson();
-      $("grammarList").innerHTML = item.grammar.map((task, index) => `
-        <div class="grammar-item">
-          <label>题目</label>
-          <textarea data-grammar-prompt="${index}">${escapeHtml(task.prompt || "")}</textarea>
-          <label>例句</label>
-          <div class="example-box">${escapeHtml(task.example || grammarExampleFor(item.grammarPoint))}</div>
-          <label>你的答案</label>
-          <textarea data-grammar-user="${index}">${escapeHtml(task.user || "")}</textarea>
-          <label>参考答案或老师补充</label>
-          <textarea data-grammar-answer="${index}">${escapeHtml(task.answer || "")}</textarea>
-          <div class="grammar-actions">
-            <button data-check-grammar="${index}" class="primary">检查本题</button>
-            <button data-delete-grammar="${index}" class="warn">删除本题</button>
-          </div>
-          <div class="result feedback-list" data-grammar-result="${index}"></div>
+      if (!grammarPracticeActive) {
+        $("checkGrammarBtn").classList.add("hidden");
+        $("grammarList").innerHTML = `<div class="reading-text">${escapeHtml(detailedGrammarGuide(item))}</div>`;
+        return;
+      }
+      $("checkGrammarBtn").classList.remove("hidden");
+      if (!item.grammar.length) {
+        addGrammar();
+        return;
+      }
+      activeGrammarIndex = Math.max(0, Math.min(activeGrammarIndex, item.grammar.length - 1));
+      const task = item.grammar[activeGrammarIndex];
+      const example = task.example || grammarExampleFor(item.grammarPoint);
+      $("grammarList").innerHTML = `<div class="quiz-deck" id="grammarDeck">
+        <div class="quiz-nav">
+          <button id="grammarPrevBtn"${activeGrammarIndex === 0 ? " disabled" : ""}>\u4e0a\u4e00\u9898</button>
+          <span>${activeGrammarIndex + 1} / ${item.grammar.length}\uff0c\u5de6\u53f3\u6ed1\u52a8\u5207\u9898</span>
+          <button id="grammarNextBtn"${activeGrammarIndex === item.grammar.length - 1 ? " disabled" : ""}>\u4e0b\u4e00\u9898</button>
         </div>
-      `).join("");
-      document.querySelectorAll("[data-check-grammar]").forEach((btn) => {
-        btn.addEventListener("click", () => checkGrammarItem(Number(btn.dataset.checkGrammar)));
+        <div class="grammar-item active-card">
+          <label>\u9898\u76ee</label>
+          <div class="grammar-prompt" data-grammar-prompt-text="${activeGrammarIndex}">${escapeHtml(task.prompt || "")}</div>
+          <label>\u4f60\u7684\u7b54\u6848</label>
+          <textarea data-grammar-user="${activeGrammarIndex}" placeholder="\u5728\u8fd9\u91cc\u5199\u8fd9\u4e00\u9898\u7684\u7b54\u6848">${escapeHtml(task.user || "")}</textarea>
+          <div class="grammar-actions">
+            <button data-check-grammar="${activeGrammarIndex}" class="primary">\u68c0\u67e5\u672c\u9898</button>
+            <button data-delete-grammar="${activeGrammarIndex}" class="warn">\u5220\u9664\u672c\u9898</button>
+          </div>
+          <div class="result feedback-list" data-grammar-result="${activeGrammarIndex}">${task.feedbackHtml || ""}</div>
+        </div>
+        <button id="showGrammarGuideBtn">\u8fd4\u56de\u8bed\u6cd5\u8bb2\u89e3</button>
+      </div>`;
+      const userBox = document.querySelector(`[data-grammar-user="${activeGrammarIndex}"]`);
+      userBox?.addEventListener("input", (event) => { task.user = event.target.value; });
+      $("grammarPrevBtn").addEventListener("click", () => moveGrammar(-1));
+      $("grammarNextBtn").addEventListener("click", () => moveGrammar(1));
+      document.querySelector("[data-check-grammar]").addEventListener("click", () => checkGrammarItem(activeGrammarIndex));
+      document.querySelector("[data-delete-grammar]").addEventListener("click", () => deleteGrammarItem(activeGrammarIndex));
+      $("showGrammarGuideBtn").addEventListener("click", () => {
+        persistCurrentGrammarCard();
+        grammarPracticeActive = false;
+        renderGrammar();
       });
-      document.querySelectorAll("[data-delete-grammar]").forEach((btn) => {
-        btn.addEventListener("click", () => deleteGrammarItem(Number(btn.dataset.deleteGrammar)));
-      });
+      const deck = $("grammarDeck");
+      deck.addEventListener("touchstart", (event) => { grammarTouchStartX = event.touches[0].clientX; }, { passive: true });
+      deck.addEventListener("touchend", (event) => {
+        const dx = event.changedTouches[0].clientX - grammarTouchStartX;
+        if (Math.abs(dx) > 45) moveGrammar(dx < 0 ? 1 : -1);
+      }, { passive: true });
+    }
+
+    function moveGrammar(step) {
+      persistGrammar();
+      const item = lesson();
+      const next = Math.max(0, Math.min(item.grammar.length - 1, activeGrammarIndex + step));
+      if (next === activeGrammarIndex) return;
+      activeGrammarIndex = next;
+      renderGrammar();
     }
 
     function persistGrammar() {
       const item = lesson();
       item.grammar = item.grammar.map((task, index) => ({
-        prompt: document.querySelector(`[data-grammar-prompt="${index}"]`)?.value || task.prompt,
+        prompt: task.prompt,
         example: task.example || grammarExampleFor(item.grammarPoint),
-        user: document.querySelector(`[data-grammar-user="${index}"]`)?.value || "",
-        answer: document.querySelector(`[data-grammar-answer="${index}"]`)?.value || ""
+        user: document.querySelector(`[data-grammar-user="${index}"]`)?.value ?? task.user ?? "",
+        answer: task.answer ?? "",
+        feedbackHtml: task.feedbackHtml || ""
       }));
     }
 
@@ -1008,44 +1112,99 @@
       const item = lesson();
       const words = shuffle(item.words.map(normalizeWordObject).filter((word) => word.en && word.cn)).slice(0, 20);
       if (!words.length) {
-        $("quizArea").innerHTML = `<p class="hint">先在“录入”里添加本课单词。</p>`;
+        $("quizArea").innerHTML = `<p class="hint">\u5148\u5728\u5f55\u5165\u91cc\u6dfb\u52a0\u672c\u8bfe\u5355\u8bcd\u3002</p>`;
         return;
       }
-      const mode = $("quizMode").value;
-      $("quizArea").innerHTML = words.map((word, index) => {
-        const question = quizQuestion(word, mode);
-        const answer = quizAnswer(word, mode);
-        return `<div class="quiz-card" data-quiz="${index}" data-answer="${escapeAttr(mode === "en-to-cn" ? word.cn : word.en)}">
-          <strong>${index + 1}. ${question}</strong>
+      activeQuizWords = words.map((word) => ({ ...word, userAnswer: "", feedbackHtml: "" }));
+      activeQuizMode = $("quizMode").value;
+      activeQuizIndex = 0;
+      $("vocabCards").classList.add("hidden");
+      renderQuizCard();
+    }
+
+    function renderQuizCard() {
+      if (!activeQuizWords.length) return;
+      activeQuizIndex = Math.max(0, Math.min(activeQuizIndex, activeQuizWords.length - 1));
+      const word = activeQuizWords[activeQuizIndex];
+      const question = quizQuestion(word, activeQuizMode);
+      const answer = quizAnswer(word, activeQuizMode);
+      $("quizArea").innerHTML = `<div class="quiz-deck" id="quizDeck">
+        <div class="quiz-nav">
+          <button id="quizPrevBtn"${activeQuizIndex === 0 ? " disabled" : ""}>\u4e0a\u4e00\u9898</button>
+          <span>${activeQuizIndex + 1} / ${activeQuizWords.length}\uff0c\u5de6\u53f3\u6ed1\u52a8\u5207\u9898</span>
+          <button id="quizNextBtn"${activeQuizIndex === activeQuizWords.length - 1 ? " disabled" : ""}>\u4e0b\u4e00\u9898</button>
+        </div>
+        <div class="quiz-card active-card" data-quiz="${activeQuizIndex}" data-answer="${escapeAttr(answer)}">
+          <strong>${activeQuizIndex + 1}. ${question}</strong>
           <div class="hint">${escapeHtml(word.phonetic ? `/${word.phonetic}/` : "")} ${escapeHtml(posLabel(word.pos))}</div>
-          <button class="icon-btn" data-quiz-speak="${index}" title="发音">▶</button>
-          <input type="text" data-quiz-answer="${index}" placeholder="输入答案">
-          <div class="result" data-quiz-result="${index}"></div>
-        </div>`;
-      }).join("");
-      document.querySelectorAll("[data-quiz]").forEach((card, index) => {
-        card.dataset.answer = quizAnswer(words[index], mode);
+          <button class="icon-btn" id="quizSpeakBtn" title="\u53d1\u97f3">\u25b6</button>
+          <input type="text" data-quiz-answer="${activeQuizIndex}" value="${escapeAttr(word.userAnswer || "")}" placeholder="\u8f93\u5165\u7b54\u6848">
+          <button id="checkQuizOneBtn" class="primary">\u68c0\u67e5\u672c\u9898</button>
+          <div class="result" data-quiz-result="${activeQuizIndex}">${word.feedbackHtml || ""}</div>
+        </div>
+        <button id="showVocabBtn">\u8fd4\u56de\u5355\u8bcd\u5361</button>
+      </div>`;
+      $("quizPrevBtn").addEventListener("click", () => moveQuiz(-1));
+      $("quizNextBtn").addEventListener("click", () => moveQuiz(1));
+      $("checkQuizOneBtn").addEventListener("click", () => checkQuizItem(activeQuizIndex));
+      $("quizSpeakBtn").addEventListener("click", () => speak(word.en || ""));
+      $("showVocabBtn").addEventListener("click", () => {
+        $("vocabCards").classList.remove("hidden");
+        $("quizArea").innerHTML = "";
       });
-      document.querySelectorAll("[data-quiz-speak]").forEach((btn) => {
-        btn.addEventListener("click", () => speak(words[Number(btn.dataset.quizSpeak)]?.en || ""));
-      });
+      const input = document.querySelector(`[data-quiz-answer="${activeQuizIndex}"]`);
+      input?.addEventListener("input", (event) => { word.userAnswer = event.target.value; });
+      const deck = $("quizDeck");
+      deck.addEventListener("touchstart", (event) => { quizTouchStartX = event.touches[0].clientX; }, { passive: true });
+      deck.addEventListener("touchend", (event) => {
+        const dx = event.changedTouches[0].clientX - quizTouchStartX;
+        if (Math.abs(dx) > 45) moveQuiz(dx < 0 ? 1 : -1);
+      }, { passive: true });
+    }
+
+    function moveQuiz(step) {
+      const next = Math.max(0, Math.min(activeQuizWords.length - 1, activeQuizIndex + step));
+      if (next === activeQuizIndex) return;
+      activeQuizIndex = next;
+      renderQuizCard();
     }
 
     function checkQuiz() {
-      const cards = Array.from(document.querySelectorAll("[data-quiz]"));
-      if (!cards.length) return;
+      if (!activeQuizWords.length) return;
       let right = 0;
-      cards.forEach((card, index) => {
-        const answer = normalize(card.dataset.answer);
-        const user = normalize(document.querySelector(`[data-quiz-answer="${index}"]`).value);
-        const ok = answer && (user === answer || answer.includes(user) || user.includes(answer));
-        if (ok) right += 1;
-        const result = document.querySelector(`[data-quiz-result="${index}"]`);
-        result.textContent = ok ? "正确" : `再想想，参考：${card.dataset.answer}`;
-        result.className = `result ${ok ? "ok" : "bad"}`;
+      activeQuizWords.forEach((word, index) => {
+        if (gradeQuizWord(word, index).ok) right += 1;
       });
-      lesson().lastScore = Math.round((right / cards.length) * 100);
-      saveData();
+      lesson().lastScore = Math.round((right / activeQuizWords.length) * 100);
+      renderStats();
+      renderQuizCard();
+      saveData(false);
+    }
+
+    function checkQuizItem(index) {
+      const feedback = gradeQuizWord(activeQuizWords[index], index);
+      const result = document.querySelector(`[data-quiz-result="${index}"]`);
+      if (result) {
+        result.innerHTML = feedback.html;
+        result.className = `result ${feedback.ok ? "ok" : "bad"}`;
+      }
+      if (feedback.ok && index < activeQuizWords.length - 1) {
+        setTimeout(() => moveQuiz(1), 450);
+      }
+    }
+
+    function gradeQuizWord(word, index) {
+      if (!word) return { ok: false, html: "" };
+      const input = document.querySelector(`[data-quiz-answer="${index}"]`);
+      if (input) word.userAnswer = input.value;
+      const answer = quizAnswer(word, activeQuizMode);
+      const userRaw = word.userAnswer || "";
+      const answerNorm = normalize(answer);
+      const userNorm = normalize(userRaw);
+      const ok = answerNorm && (userNorm === answerNorm || answerNorm.includes(userNorm) || userNorm.includes(answerNorm));
+      const html = ok ? "\u6b63\u786e\u3002" : quizWrongMessage(word, userRaw, answer);
+      word.feedbackHtml = html;
+      return { ok, html };
     }
 
     function checkGrammar() {
@@ -1068,13 +1227,15 @@
       const result = document.querySelector(`[data-grammar-result="${index}"]`);
       if (!result) return;
       const feedback = grammarFeedback(task, lesson().grammarPoint);
-      result.innerHTML = feedback.messages.map((msg) => `<div>${escapeHtml(msg)}</div>`).join("");
+      task.feedbackHtml = feedback.messages.map((msg) => `<div>${escapeHtml(msg)}</div>`).join("");
+      result.innerHTML = task.feedbackHtml;
       result.className = `result ${feedback.ok ? "ok" : "bad"} feedback-list`;
     }
 
     function deleteGrammarItem(index) {
       persistGrammar();
       lesson().grammar.splice(index, 1);
+      activeGrammarIndex = Math.max(0, Math.min(activeGrammarIndex, lesson().grammar.length - 1));
       saveData();
     }
 
@@ -1099,23 +1260,98 @@
     }
 
     function addGrammar() {
-      persistGrammar();
-      lesson().grammar.push({ prompt: "新语法题", example: grammarExampleFor(lesson().grammarPoint), user: "", answer: "" });
-      saveData();
+      persistCurrentGrammarCard();
+      const item = lesson();
+      item.grammar.push(randomGrammarTask(item));
+      activeGrammarIndex = item.grammar.length - 1;
+      grammarPracticeActive = true;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(lessons));
+      renderGrammar();
+      renderStats();
     }
 
     function addTranslateTask() {
-      persistGrammar();
+      persistCurrentGrammarCard();
       const item = lesson();
-      const words = item.words.map(normalizeWordObject).filter((word) => word.en && word.cn).slice(0, 5);
-      const wordHint = words.length ? `尽量使用这些词：${words.map((word) => `${word.en}=${word.cn}`).join("；")}` : "尽量使用本课句型。";
-      item.grammar.push({
-        prompt: `翻译句子：根据本课语法点写 3 个中文句子，并翻译成英文。\n${wordHint}`,
-        example: grammarExampleFor(item.grammarPoint),
-        user: "",
-        answer: ""
-      });
-      saveData();
+      item.grammar.push(randomGrammarTask(item, "translate"));
+      activeGrammarIndex = item.grammar.length - 1;
+      grammarPracticeActive = true;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(lessons));
+      renderGrammar();
+      renderStats();
+    }
+
+    function persistCurrentGrammarCard() {
+      const item = lesson();
+      const index = activeGrammarIndex;
+      const task = item.grammar[index];
+      if (!task) return;
+      const userBox = document.querySelector(`[data-grammar-user="${index}"]`);
+      if (userBox) task.user = userBox.value;
+    }
+
+    function randomGrammarTask(item, forceType = "") {
+      const words = item.words.map(normalizeWordObject).filter((word) => word.en && word.cn);
+      const word = shuffle(words)[0] || { en: "book", cn: "书" };
+      const alt = shuffle(words.filter((itemWord) => normalize(itemWord.en) !== normalize(word.en)))[0] || { en: "pen", cn: "钢笔" };
+      const example = grammarExampleFor(item.grammarPoint);
+      const types = ["toStatement", "toQuestion", "toNegative", "translate", "yesNo"];
+      const type = forceType || types[Math.floor(Math.random() * types.length)];
+      const singular = needsArticle(word.en) ? `${articleFor(word.en)} ${word.en}` : word.en;
+      const altSingular = needsArticle(alt.en) ? `${articleFor(alt.en)} ${alt.en}` : alt.en;
+      const tasks = {
+        toStatement: {
+          prompt: `句型转换：把下面的一般疑问句改成肯定句。\nIs this your ${word.en}?`,
+          answer: `This is my ${word.en}.`
+        },
+        toQuestion: {
+          prompt: `句型转换：把下面的肯定句改成一般疑问句。\nThis is my ${word.en}.`,
+          answer: `Is this your ${word.en}?`
+        },
+        toNegative: {
+          prompt: `句型转换：把下面的肯定句改成否定句。\nThis is my ${word.en}.`,
+          answer: `This is not my ${word.en}.`
+        },
+        translate: {
+          prompt: `中译英：请翻译下面的句子。\n这是你的${cleanChineseNoun(word.cn)}吗？`,
+          answer: `Is this your ${word.en}?`
+        },
+        yesNo: {
+          prompt: `回答问题：请用完整 Yes/No 句回答。\nIs this your ${word.en}?`,
+          answer: `Yes, it is. / No, it isn't.`
+        }
+      };
+      if (/国籍|身份|职业|job|nationality/i.test(item.grammarPoint)) {
+        tasks.translate = {
+          prompt: `中译英：请翻译下面的句子。\n他是${cleanChineseNoun(word.cn)}。`,
+          answer: `He is ${singular}.`
+        };
+        tasks.toQuestion = {
+          prompt: `句型转换：把下面的肯定句改成一般疑问句。\nHe is ${singular}.`,
+          answer: `Is he ${singular}?`
+        };
+      }
+      if (/形容词|状态|How are you/i.test(item.grammarPoint)) {
+        tasks.translate = {
+          prompt: `中译英：请翻译下面的句子。\n它是${cleanChineseNoun(word.cn)}的。`,
+          answer: `It is ${word.en}.`
+        };
+      }
+      const selected = tasks[type] || tasks.translate;
+      selected.prompt += `\n提示词：${word.en}=${word.cn}${alt.en ? `；${alt.en}=${alt.cn}` : ""}`;
+      return { prompt: selected.prompt, example, user: "", answer: selected.answer, feedbackHtml: "" };
+    }
+
+    function cleanChineseNoun(text) {
+      return String(text || "").replace(/[()（）]/g, "").split(/[，,;；]/)[0].trim();
+    }
+
+    function articleFor(word) {
+      return /^[aeiou]/i.test(String(word || "")) ? "an" : "a";
+    }
+
+    function needsArticle(word) {
+      return !/\s/.test(String(word || "")) && !/^(i|you|he|she|it|we|they|this|that|these|those|my|your|his|her|our|their)$/i.test(String(word || ""));
     }
 
     function exportData() {
@@ -1223,7 +1459,66 @@
       const wordLine = words.length
         ? words.map((word) => `${word.en}${word.phonetic ? " /" + word.phonetic + "/" : ""} ${posLabel(word.pos)}：${word.cn}`).join("\n")
         : "本课暂无单词，先完成语法句型替换。";
-      return `${item.grammarPoint.trim() || "还没有录入语法重点。"}\n\n例句：\n${grammarExampleFor(item.grammarPoint)}\n\n本课重点单词/短语：\n${wordLine}`;
+      return `${item.grammarPoint.trim() || "还没有录入语法重点。"}\n\n句型模板：\n${grammarExampleFor(item.grammarPoint)}\n\n本课重点单词/短语：\n${wordLine}`;
+    }
+
+    function detailedGrammarGuide(item) {
+      const point = item.grammarPoint.trim() || inferGrammarPoint(item);
+      const words = (item.words || []).map(normalizeWordObject).filter((word) => word.en && word.cn).slice(0, 8);
+      const wordLine = words.length
+        ? words.map((word) => `${word.en} = ${word.cn}`).join("；")
+        : "本课暂无可用单词，先按句型完成转换。";
+      const guide = grammarGuideFor(point);
+      return `这一节的语法知识点\n${point || "本课主要练习基础句型转换。"}\n\n怎么理解\n${guide.meaning}\n\n句型结构\n${guide.forms.join("\n")}\n\n做题时看什么\n${guide.steps.join("\n")}\n\n常见错误\n${guide.mistakes.join("\n")}\n\n本课可用词\n${wordLine}\n\n点击“生成练习”后，我会直接给你一道具体题目，你只需要填写答案。`;
+    }
+
+    function inferGrammarPoint(item) {
+      const text = `${item.text || ""}\n${(item.words || []).map((word) => word.en).join(" ")}`;
+      if (/\b(is|are|am)\b/i.test(text)) return "be 动词句型：肯定句、否定句和一般疑问句。";
+      if (/\bwhat|where|who|whose|how\b/i.test(text)) return "特殊疑问句：用疑问词询问信息。";
+      return "基础句型转换：肯定句、否定句、疑问句和中译英。";
+    }
+
+    function grammarGuideFor(point) {
+      const value = String(point || "");
+      if (value.includes("一般疑问句") || value.includes("this/that") || value.includes("物主代词")) {
+        return {
+          meaning: "这一类题重点是 be 动词提前。中文里常说“这是你的……吗？”，英文不能按中文顺序写成 This is your ...?，而要把 Is 放到句首。",
+          forms: ["肯定句：This is my/your + 名词.", "一般疑问句：Is this your + 名词?", "回答：Yes, it is. / No, it isn't."],
+          steps: ["1. 先判断句子里有没有 am/is/are。", "2. 改疑问句时，把 am/is/are 放到句首。", "3. my 和 your 会根据说话对象变化。", "4. 问句用 ?，回答句用 .。"],
+          mistakes: ["Is/Are 开头要大写。", "问句末尾用 ?，不要写成 .。", "Yes 后面通常加逗号：Yes, it is.", "this/that 是单数，回答用 it。"]
+        };
+      }
+      if (value.includes("现在进行时")) {
+        return {
+          meaning: "现在进行时表示正在发生的动作，核心结构是 be + doing。缺少 be 或 doing 都不完整。",
+          forms: ["肯定句：主语 + am/is/are + doing.", "疑问句：Am/Is/Are + 主语 + doing?", "否定句：主语 + am/is/are not + doing."],
+          steps: ["1. 找主语，决定用 am、is 还是 are。", "2. 动词改成 doing。", "3. 改疑问句时把 be 动词提前。"],
+          mistakes: ["不要漏掉 am/is/are。", "不要只写动词原形。", "he/she/it 后用 is，you/we/they 后用 are。"]
+        };
+      }
+      if (value.includes("现在完成时")) {
+        return {
+          meaning: "现在完成时表示动作已经发生，并且和现在有关。核心结构是 have/has + 过去分词。",
+          forms: ["肯定句：主语 + have/has + 过去分词.", "疑问句：Have/Has + 主语 + 过去分词?", "否定句：主语 + have/has not + 过去分词."],
+          steps: ["1. 第三人称单数用 has，其他多用 have。", "2. 动词要用过去分词。", "3. 疑问句把 have/has 提前。"],
+          mistakes: ["不要写成 has went，要写 has gone。", "不要漏掉 have/has。", "疑问句句尾用 ?。"]
+        };
+      }
+      if (value.includes("There be")) {
+        return {
+          meaning: "There be 表示“某处有某物”。be 动词跟后面的名词单复数变化。",
+          forms: ["单数：There is + 单数名词 + 地点.", "复数：There are + 复数名词 + 地点.", "疑问句：Is/Are there + 名词 + 地点?"],
+          steps: ["1. 看后面的名词是单数还是复数。", "2. 单数用 is，复数用 are。", "3. 改疑问句时把 is/are 放到 there 前。"],
+          mistakes: ["不要写 There have。", "some 在疑问句里常改 any。", "单复数要和 is/are 对上。"]
+        };
+      }
+      return {
+        meaning: "这一节主要训练英语句子的基本顺序。做题时先确定主语，再确定动词形式，最后检查名词单复数、冠词和标点。",
+        forms: ["肯定句：主语 + 动词 + 其他.", "否定句：主语 + 助动词/be 动词 + not + 其他.", "疑问句：助动词/be 动词 + 主语 + 其他?"],
+        steps: ["1. 找主语。", "2. 找动词或 be 动词。", "3. 按题目要求改成肯定、否定或疑问。", "4. 检查大小写和标点。"],
+        mistakes: ["句首忘记大写。", "问句不提前助动词或 be 动词。", "a/an/the 漏写。", "名词单复数不一致。"]
+      };
     }
 
     function grammarExampleFor(point) {
@@ -1247,14 +1542,38 @@
       return found ? found[1] : "This is my book.\nIs this your book?\nNo, it isn't.";
     }
 
+    function semanticGrammarMessages(task, user) {
+      if (/仿写|替换造句/.test(String(task.prompt || ""))) return [];
+      const source = `${task.prompt || ""}\n${task.example || ""}\n${task.answer || ""}`;
+      const expected = findExpectedByChinese(source) || findExpectedByChinese(user);
+      if (!expected) return [];
+      const userWords = (String(user || "").toLowerCase().match(/[a-z]+(?:\s+[a-z]+)?/g) || []);
+      const wrong = knownWords().find((word) => {
+        const en = normalize(word.en);
+        return en && en !== normalize(expected.en) && userWords.some((item) => normalize(item) === en);
+      });
+      if (!wrong) return [];
+      return [`\u8bed\u4e49\u4e0d\u5339\u914d\uff1a\u9898\u76ee\u91cc\u7684\u201c${expected.cn}\u201d\u5e94\u8be5\u5199 ${expected.en}\uff0c\u4f60\u5199\u4e86 ${wrong.en}\uff0c${wrong.en} \u662f\u201c${wrong.cn}\u201d\u3002`];
+    }
+
     function grammarFeedback(task, point) {
       const user = String(task.user || "").trim();
       const answer = String(task.answer || "").trim();
-      if (!user) return { ok: false, messages: ["还没有写答案。先照着例句写 2-3 句，我再帮你检查。"] };
+      if (!user) return { ok: false, messages: ["还没有写答案。先看题目要求，把答案写在输入框里，我再帮你检查。"] };
       const messages = [];
+      messages.push(...semanticGrammarMessages(task, user));
       if (answer && normalize(user) === normalize(answer)) {
         return { ok: true, messages: ["正确，和参考答案一致。"] };
       }
+      if (answer && !answer.includes(" / ")) {
+        messages.push(`正确写法：${answer}`);
+      }
+      if (answer && answer.includes(" / ")) {
+        const choices = answer.split(/\s*\/\s*/).map((item) => normalize(item));
+        if (choices.includes(normalize(user))) return { ok: true, messages: ["正确，这种回答可以。"] };
+        messages.push(`可以这样写：${answer}`);
+      }
+      const suggestion = grammarSuggestion(task, user);
       if (!/[.!?。！？]$/.test(user)) messages.push("句末建议加标点：英文句子用 . ? !。");
       if (/\bi\b/.test(user)) messages.push("单独的 I 要大写。");
       if (String(point).includes("一般疑问句") && /\?/.test(user) && !/^\s*(Is|Are|Am|Do|Does|Did|Have|Has|Can|Must|Will|Shall)\b/i.test(user)) {
@@ -1270,9 +1589,42 @@
         messages.push("There be 句型要从 There is/are 开始。");
       }
       if (/\ba\s+[aeiou]/i.test(user)) messages.push("元音音素开头的单词前通常用 an，不用 a。");
+      if (suggestion) messages.push(`建议改成：${suggestion}`);
       if (messages.length === 0) messages.push("结构基本可以。再对照例句检查：主语、动词形式、冠词、单复数和词序。");
-      if (answer) messages.push(`参考答案：${answer}`);
-      return { ok: messages.length === 1 && messages[0].startsWith("结构基本可以"), messages };
+      const answerMismatch = !!answer && !answer.includes(" / ") && normalize(user) !== normalize(answer);
+      const hardWrong = answerMismatch || messages.some((msg) => msg.includes("语义不匹配") || msg.includes("通常把") || msg.includes("要用"));
+      if (!hardWrong && suggestion) messages.unshift("结构可以，主要把大小写、问号、逗号和句号写规范。");
+      return { ok: !hardWrong, messages };
+    }
+
+    function grammarSuggestion(task, user) {
+      const text = String(user || "").trim();
+      const cleaned = text.replace(/\s+([?.!,])/g, "$1").replace(/\s+/g, " ").trim();
+      const yesNo = cleaned.match(/^(is|are|am|do|does|did|have|has|can|must|will|shall)\s+(.+?)\s*\?\s*(yes|no)[,\s]+(.+)$/i);
+      if (yesNo) {
+        const start = capitalizeFirst(yesNo[1]);
+        const questionBody = yesNo[2].replace(/[?.!]+$/g, "").trim();
+        const answerStart = capitalizeFirst(yesNo[3]);
+        const answerBody = yesNo[4].replace(/[?.!]+$/g, "").trim();
+        return `${start} ${questionBody}? ${answerStart}, ${answerBody}.`;
+      }
+      const sentence = cleaned.replace(/[?.!]+$/g, "");
+      const statementQuestion = sentence.match(/^(this|that|it|he|she|you|they|we|i)\s+(am|is|are)\s+(.+)$/i);
+      if (statementQuestion && /\?/.test(cleaned)) {
+        const subject = statementQuestion[1].toLowerCase() === "i" ? "I" : statementQuestion[1].toLowerCase();
+        return `${capitalizeFirst(statementQuestion[2])} ${subject} ${statementQuestion[3]}?`;
+      }
+      if (/^(is|are|am|do|does|did|have|has|can|must|will|shall)\b/i.test(sentence)) {
+        return `${capitalizeFirst(sentence)}?`;
+      }
+      if (/仿写|替换造句/.test(String(task.prompt || ""))) {
+        return `${capitalizeFirst(sentence)}.`;
+      }
+      return "";
+    }
+
+    function capitalizeFirst(text) {
+      return String(text || "").replace(/^[a-z]/, (char) => char.toUpperCase());
     }
 
     function quizQuestion(word, mode) {
@@ -1284,6 +1636,56 @@
 
     function quizAnswer(word, mode) {
       return mode === "en-to-cn" ? word.cn : word.en;
+    }
+
+    const commonTranslations = [
+      ["apple", "苹果"], ["banana", "香蕉"], ["dog", "狗"], ["pig", "猪"], ["cat", "猫"],
+      ["book", "书"], ["pen", "钢笔"], ["pencil", "铅笔"], ["car", "汽车"], ["house", "房子"],
+      ["schoolbag", "书包"], ["bag", "包"], ["backpack", "双肩包"],
+      ["handbag", "手提包"], ["umbrella", "雨伞"], ["watch", "手表"], ["coat", "外套"], ["dress", "连衣裙"],
+      ["teacher", "老师"], ["student", "学生"], ["engineer", "工程师"], ["nurse", "护士"], ["doctor", "医生"],
+      ["table", "桌子"], ["chair", "椅子"], ["window", "窗户"], ["door", "门"], ["school", "学校"]
+    ];
+
+    function knownWords() {
+      const fromLessons = lessons.flatMap((item) => item.words || []).map(normalizeWordObject).filter((word) => word.en && word.cn);
+      const fromCommon = commonTranslations.map(([en, cn]) => ({ en, cn, phonetic: "", pos: "" }));
+      return [...fromLessons, ...fromCommon];
+    }
+
+    function findWordByEnglish(value) {
+      const key = normalize(value).split(" ")[0];
+      return knownWords().find((word) => normalize(word.en) === key);
+    }
+
+    function findWordByChinese(value) {
+      const key = String(value || "").replace(/[()（）,，.。;；\s]/g, "");
+      if (!key) return null;
+      return knownWords().find((word) => {
+        const cn = String(word.cn || "").replace(/[()（）,，.。;；\s]/g, "");
+        return cn && (key === cn || key.includes(cn) || cn.includes(key));
+      });
+    }
+
+    function findExpectedByChinese(text) {
+      const value = String(text || "");
+      return knownWords().find((word) => {
+        const cn = String(word.cn || "").replace(/[()（）,，.。;；\s]/g, "");
+        return cn && value.includes(cn);
+      });
+    }
+
+    function quizWrongMessage(word, userRaw, answer) {
+      const parts = [`再想想，正确答案：${escapeHtml(answer)}`];
+      const wrong = findWordByEnglish(userRaw);
+      if (activeQuizMode !== "en-to-cn" && wrong && normalize(wrong.en) !== normalize(word.en)) {
+        parts.push(`你写的是 ${escapeHtml(wrong.en)} = ${escapeHtml(wrong.cn)}，不是 ${escapeHtml(word.cn)}。`);
+      }
+      const chineseWrong = findWordByChinese(userRaw);
+      if (activeQuizMode === "en-to-cn" && chineseWrong && normalize(chineseWrong.en) !== normalize(word.en)) {
+        parts.push(`${escapeHtml(userRaw)} 的英语通常是 ${escapeHtml(chineseWrong.en)}，不是 ${escapeHtml(word.en)}。`);
+      }
+      return parts.map((item) => `<div>${item}</div>`).join("");
     }
 
     function parsePastedWord(line) {
@@ -1304,15 +1706,15 @@
 
     function selectedPronTarget() {
       const custom = $("pronCustomText").value.trim();
-      if (custom) return { en: custom, phonetic: "", pos: "", cn: "自定义跟读" };
-      return selectedPronWord();
+      if (custom) return { en: custom, phonetic: "", pos: "", cn: "custom" };
+      return { en: "", phonetic: "", pos: "", cn: "" };
     }
 
     function updatePronTarget() {
       const word = selectedPronTarget();
       $("pronTarget").textContent = word.en
-        ? `目标：${word.en}${word.phonetic ? ` /${word.phonetic}/` : ""}${word.cn && word.cn !== "自定义跟读" ? ` ${posLabel(word.pos)}：${word.cn}` : ""}`
-        : "选择一个单词，或输入任意单词/句子。";
+        ? `\u76ee\u6807\uff1a${word.en}`
+        : "\u53ef\u4ee5\u76f4\u63a5\u6309\u4f4f\u8bf4\u82f1\u8bed\u8ba9\u6211\u731c\uff0c\u4e5f\u53ef\u4ee5\u5148\u8f93\u5165\u76ee\u6807\u5185\u5bb9\u518d\u7ea0\u97f3\u3002";
       $("pronMeter").style.width = "0%";
       $("pronFeedback").textContent = "";
     }
@@ -1352,11 +1754,6 @@
     function startPronPractice() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       const word = selectedPronTarget();
-      if (!word.en) {
-        $("pronFeedback").textContent = "先选择一个单词，或输入你想跟读的句子。";
-        $("pronFeedback").className = "result bad feedback-list";
-        return;
-      }
       if (!SpeechRecognition) {
         $("pronFeedback").innerHTML = "当前浏览器不支持语音识别。建议用 Chrome 或 Edge 打开，并允许麦克风权限。";
         $("pronFeedback").className = "result bad feedback-list";
@@ -1434,60 +1831,48 @@
     }
 
     function pronunciationFeedback(word, heard, alternatives) {
-      const target = normalizeSpoken(word.en);
+      const targetText = String(word.en || "").trim();
+      if (!targetText) {
+        const score = heard ? 72 : 20;
+        const messages = heard
+          ? [`\u6211\u542c\u5230\u4f60\u8bfb\u7684\u662f\uff1a${heard}`, "\u5982\u679c\u8fd9\u4e0d\u662f\u4f60\u60f3\u8bfb\u7684\u8bcd\uff0c\u8bf4\u660e\u53d1\u97f3\u8fd8\u4e0d\u591f\u7a33\u5b9a\uff1a\u653e\u6162\u4e00\u70b9\uff0c\u628a\u91cd\u97f3\u548c\u7ed3\u5c3e\u8f85\u97f3\u8bfb\u5b8c\u6574\u3002", `\u6211\u4f1a\u6309\u8bc6\u522b\u7ed3\u679c\u53d1\u4e00\u904d\u6807\u51c6\u8bfb\u97f3\uff1a${heard}`]
+          : ["\u8fd9\u6b21\u6211\u6ca1\u6709\u542c\u6e05\u5177\u4f53\u5185\u5bb9\u3002\u8bf7\u79bb\u9ea6\u514b\u98ce\u8fd1\u4e00\u70b9\uff0c\u8bfb\u6162\u4e00\u70b9\uff0c\u7ed3\u5c3e\u97f3\u4e0d\u8981\u541e\u6389\u3002"];
+        return { score, messages, sayText: heard || "" };
+      }
+      const target = normalizeSpoken(targetText);
       const guesses = alternatives.map(normalizeSpoken);
       const bestScore = Math.max(...guesses.map((guess) => similarity(target, guess)), 0);
       const score = Math.round(bestScore * 100);
-      const messages = [`我听到：${heard || "没有识别到"}`, `目标：${word.en}${word.phonetic ? ` /${word.phonetic}/` : ""}`, `匹配度：${score}%`];
-      if (score >= 90) messages.push("很好，发音很接近标准。继续保持重音和尾音。");
+      const messages = [`\u6211\u542c\u5230\uff1a${heard || "\u6ca1\u6709\u8bc6\u522b\u5230"}`, `\u76ee\u6807\uff1a${targetText}${word.phonetic ? ` /${word.phonetic}/` : ""}`, `\u5339\u914d\u5ea6\uff1a${score}%`];
+      if (score >= 90) messages.push("\u5f88\u597d\uff0c\u53d1\u97f3\u5f88\u63a5\u8fd1\u6807\u51c6\u3002\u7ee7\u7eed\u4fdd\u6301\u91cd\u97f3\u3001\u5143\u97f3\u957f\u5ea6\u548c\u7ed3\u5c3e\u97f3\u3002");
       else {
-        if (!heard) messages.push("我这次没有听出具体内容。按住语音条重新读，声音靠近麦克风，单词要读完整。");
-        else messages.push(`我没有稳定听成 “${word.en}”。再读慢一点，先听标准音，再模仿重音、元音长度和结尾辅音。`);
-        messages.push(...phoneticTips(word.phonetic, word.en));
+        if (!heard) messages.push("\u8fd9\u6b21\u6ca1\u6709\u542c\u6e05\u3002\u6309\u4f4f\u8bed\u97f3\u6761\u91cd\u65b0\u8bfb\uff0c\u58f0\u97f3\u9760\u8fd1\u9ea6\u514b\u98ce\uff0c\u5355\u8bcd\u8981\u8bfb\u5b8c\u6574\u3002");
+        else messages.push(`\u6211\u6ca1\u6709\u7a33\u5b9a\u542c\u6210\u201c${targetText}\u201d\u3002\u5148\u542c\u6807\u51c6\u97f3\uff0c\u518d\u6a21\u4eff\u91cd\u97f3\u3001\u5143\u97f3\u957f\u5ea6\u548c\u7ed3\u5c3e\u8f85\u97f3\u3002`);
+        messages.push(...phoneticTips(word.phonetic, targetText));
       }
-      return { score, messages };
+      return { score, messages, sayText: targetText };
     }
 
     function renderPronChatIntro() {
-      const target = selectedPronTarget();
       $("pronChat").innerHTML = "";
-      addCoachBubble(`跟读目标：${target.en || "请选择单词或输入句子"}\n先点“听标准音”，再按住下面的语音条读。`);
+      addCoachBubble("\u53ef\u4ee5\u76f4\u63a5\u6309\u4f4f\u8bed\u97f3\u6761\u8bfb\u4efb\u610f\u82f1\u6587\uff0c\u6211\u4f1a\u731c\u4f60\u8bfb\u7684\u662f\u4ec0\u4e48\uff1b\u4e5f\u53ef\u4ee5\u5148\u8f93\u5165\u76ee\u6807\u8bcd/\u53e5\u5b50\uff0c\u6211\u518d\u6309\u76ee\u6807\u7ed9\u4f60\u7ea0\u97f3\u3002", "");
     }
 
     function addPronExchange(target, heard, feedback) {
       setTimeout(() => {
-        addVoiceBubble(target, pendingAudioUrl, pendingAudioDuration);
-        addCoachBubble(feedback.messages.join("\n"));
+        addVoiceBubble(target || "\u81ea\u7531\u6717\u8bfb", pendingAudioUrl, pendingAudioDuration);
+        addCoachBubble(feedback.messages.join("\n"), feedback.sayText || target || heard || "");
       }, 260);
     }
 
-    function addCoachBubble(text) {
+    function addCoachBubble(text, sayText = "") {
       const row = document.createElement("div");
       row.className = "chat-row coach";
-      row.innerHTML = `<div class="bubble">${escapeHtml(text)}<div class="chat-meta">${new Date().toLocaleTimeString()}</div></div>`;
+      const sayButton = sayText ? `<button class="icon-btn" data-say-coach="${escapeAttr(sayText)}" title="\u542c\u6b63\u786e\u8bfb\u97f3">\u25b6</button>` : "";
+      row.innerHTML = `<div class="bubble">${escapeHtml(text)}${sayButton}<div class="chat-meta">${new Date().toLocaleTimeString()}</div></div>`;
       $("pronChat").appendChild(row);
+      row.querySelector("[data-say-coach]")?.addEventListener("click", (event) => speak(event.currentTarget.dataset.sayCoach || "", { expressive: true }));
       scrollPronChat();
-    }
-
-    function addVoiceBubble(target, audioUrl, duration) {
-      const row = document.createElement("div");
-      row.className = "chat-row me";
-      const playable = audioUrl ? "点击播放我的语音" : "语音未保存";
-      row.innerHTML = `<div class="bubble voice-message" data-audio="${escapeAttr(audioUrl || "")}">
-        <span>${escapeHtml(playable)} · ${duration || 0}s</span>
-        <div class="chat-meta">目标：${escapeHtml(target)}</div>
-      </div>`;
-      $("pronChat").appendChild(row);
-      row.querySelector("[data-audio]").addEventListener("click", (event) => {
-        const src = event.currentTarget.dataset.audio;
-        if (src) new Audio(src).play();
-      });
-      scrollPronChat();
-    }
-
-    function scrollPronChat() {
-      const box = $("pronChat");
-      box.scrollTop = box.scrollHeight;
     }
 
     function phoneticTips(phonetic, word) {
@@ -1558,6 +1943,7 @@
         persistEditor();
         persistGrammar();
         activeTab = tab.dataset.tab;
+        if (activeTab === "grammar") grammarPracticeActive = false;
         renderTabs();
         renderAll();
       });
@@ -1573,7 +1959,7 @@
     $("addTranslateBtn").addEventListener("click", addTranslateTask);
     $("checkGrammarBtn").addEventListener("click", checkGrammar);
     $("speakTextBtn").addEventListener("click", () => speak(lesson().text || "", { expressive: true }));
-    $("speakGrammarBtn").addEventListener("click", () => speak(grammarExampleFor(lesson().grammarPoint)));
+    $("speakGrammarBtn").addEventListener("click", () => speak(detailedGrammarGuide(lesson())));
     $("pronWordSelect").addEventListener("change", updatePronTarget);
     $("pronCustomText").addEventListener("input", updatePronTarget);
     $("useSelectedWordBtn").addEventListener("click", useSelectedWordForPron);
