@@ -367,35 +367,33 @@
       transition: width .2s ease;
     }
 
-    .auth-screen {
-      min-height: 100vh;
+    .voice-bar {
+      width: 100%;
+      min-height: 58px;
+      border-radius: 999px;
+      border: 1px solid #bfd5d2;
+      background: var(--accent);
+      color: #fff;
       display: grid;
       place-items: center;
-      padding: 22px;
-      background: var(--bg);
+      font-weight: 700;
+      user-select: none;
+      touch-action: none;
+      box-shadow: 0 8px 22px rgba(47, 111, 115, .18);
     }
 
-    .auth-box {
-      width: min(420px, 100%);
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      box-shadow: var(--shadow);
-      padding: 18px;
+    .voice-bar.recording {
+      background: var(--accent-2);
+      border-color: var(--accent-2);
+      transform: scale(.99);
     }
 
-    .auth-box h1 {
-      margin: 0 0 8px;
-      font-size: 22px;
-    }
-
-    .auth-box p {
-      margin: 0 0 14px;
+    .voice-status {
+      min-height: 26px;
       color: var(--muted);
-      line-height: 1.6;
+      margin-top: 8px;
+      line-height: 1.5;
     }
-
-    .locked { display: none !important; }
 
     .reading-text {
       white-space: pre-wrap;
@@ -533,21 +531,7 @@
   </style>
 </head>
 <body>
-  <div class="auth-screen" id="authScreen">
-    <div class="auth-box">
-      <h1 id="authTitle">访问密码</h1>
-      <p id="authHelp">首次打开请设置一个只有你知道的密码。</p>
-      <label for="authPassword">密码</label>
-      <input id="authPassword" type="password" autocomplete="current-password" placeholder="输入密码">
-      <div class="tools-row" style="margin-top: 14px;">
-        <button id="authSubmit" class="primary">进入</button>
-        <button id="authReset" class="warn" title="清除本机保存的密码">重置本机密码</button>
-      </div>
-      <div class="result" id="authMessage"></div>
-    </div>
-  </div>
-
-  <div class="app locked" id="appShell">
+  <div class="app" id="appShell">
     <aside>
       <div class="brand">
         <div>
@@ -659,9 +643,9 @@
             <div class="tools-row">
               <button id="useSelectedWordBtn">使用选中单词</button>
               <button id="speakTargetBtn">听标准音</button>
-              <button id="recordPronBtn" class="primary">开始跟读</button>
-              <button id="stopPronBtn">停止</button>
             </div>
+            <div id="voiceHoldBtn" class="voice-bar">按住说话</div>
+            <div id="voiceStatus" class="voice-status">松开后我会根据识别结果给你纠音建议。</div>
             <div class="hint" id="pronTarget">选择一个单词，或输入任意句子，然后点击开始跟读。</div>
             <div class="meter"><span id="pronMeter"></span></div>
             <div class="result feedback-list" id="pronFeedback"></div>
@@ -704,9 +688,9 @@
   <script>
     const TOTAL_LESSONS = 144;
     const STORAGE_KEY = "nce1_lesson_tool_v5";
-    const AUTH_KEY = "nce1_auth_hash_v1";
     let activeRecognition = null;
     let pronAttempts = 0;
+    let holdStartedAt = 0;
     const initialLessons = Array.from({ length: TOTAL_LESSONS }, (_, index) => ({
       id: index + 1,
       title: `Lesson ${index + 1}`,
@@ -1269,6 +1253,27 @@
       updatePronTarget();
     }
 
+    function beginVoiceHold(event) {
+      event.preventDefault();
+      holdStartedAt = Date.now();
+      $("voiceHoldBtn").classList.add("recording");
+      $("voiceHoldBtn").textContent = "正在听...松开结束";
+      $("voiceStatus").textContent = "请开始读。";
+      startPronPractice();
+    }
+
+    function endVoiceHold(event) {
+      event.preventDefault();
+      $("voiceHoldBtn").classList.remove("recording");
+      $("voiceHoldBtn").textContent = "按住说话";
+      if (Date.now() - holdStartedAt < 350) {
+        $("voiceStatus").textContent = "按住时间太短，像微信语音一样按住读完整。";
+      } else {
+        $("voiceStatus").textContent = "已松开，正在整理纠音建议。";
+      }
+      stopPronPractice(false);
+    }
+
     function startPronPractice() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       const word = selectedPronTarget();
@@ -1300,34 +1305,22 @@
         $("pronFeedback").innerHTML = feedback.messages.map((msg) => `<div>${escapeHtml(msg)}</div>`).join("");
         $("pronFeedback").className = `result ${feedback.score >= 80 ? "ok" : "bad"} feedback-list`;
         addPronHistory(word.en, best, feedback.score);
-        if (feedback.score < 85 && activeRecognition === recognition) {
-          setTimeout(() => {
-            $("pronFeedback").innerHTML += `<div>再来一次，我继续听，直到能识别出来。</div>`;
-            try { recognition.start(); } catch {}
-          }, 850);
-        }
+        $("voiceStatus").textContent = feedback.score >= 85 ? "这次不错，可以继续练下一句。" : "这次没听准，按住语音条再读一次。";
       };
       recognition.onerror = (event) => {
         $("pronFeedback").textContent = `没有听清：${event.error || "请检查麦克风权限"}`;
         $("pronFeedback").className = "result bad feedback-list";
-        if (event.error === "no-speech" && activeRecognition === recognition) {
-          setTimeout(() => { try { recognition.start(); } catch {} }, 900);
-        }
-      };
-      recognition.onend = () => {
-        if (activeRecognition === recognition && $("pronFeedback").textContent.includes("正在听")) {
-          try { recognition.start(); } catch {}
-        }
+        $("voiceStatus").textContent = "没有听清，按住后离手机近一点再读。";
       };
       recognition.start();
     }
 
-    function stopPronPractice() {
+    function stopPronPractice(showStopped = true) {
       if (activeRecognition) {
         activeRecognition.stop();
         activeRecognition = null;
       }
-      $("pronFeedback").innerHTML += `<div>已停止跟读。</div>`;
+      if (showStopped) $("pronFeedback").innerHTML += `<div>已停止跟读。</div>`;
     }
 
     function pronunciationFeedback(word, heard, alternatives) {
@@ -1338,7 +1331,8 @@
       const messages = [`我听到：${heard || "没有识别到"}`, `目标：${word.en}${word.phonetic ? ` /${word.phonetic}/` : ""}`, `匹配度：${score}%`];
       if (score >= 90) messages.push("很好，发音很接近标准。继续保持重音和尾音。");
       else {
-        messages.push("再读慢一点，先听标准音，再模仿重音、元音长度和结尾辅音。");
+        if (!heard) messages.push("我这次没有听出具体内容。按住语音条重新读，声音靠近麦克风，单词要读完整。");
+        else messages.push(`我没有稳定听成 “${word.en}”。再读慢一点，先听标准音，再模仿重音、元音长度和结尾辅音。`);
         messages.push(...phoneticTips(word.phonetic, word.en));
       }
       return { score, messages };
@@ -1396,64 +1390,6 @@
       return dp[a.length][b.length];
     }
 
-    async function hashPassword(value) {
-      if (!crypto?.subtle) {
-        let hash = 2166136261;
-        for (let index = 0; index < value.length; index++) {
-          hash ^= value.charCodeAt(index);
-          hash = Math.imul(hash, 16777619);
-        }
-        return `fallback-${(hash >>> 0).toString(16)}`;
-      }
-      const data = new TextEncoder().encode(value);
-      const digest = await crypto.subtle.digest("SHA-256", data);
-      return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
-    }
-
-    async function initAuth() {
-      const saved = localStorage.getItem(AUTH_KEY);
-      $("authTitle").textContent = saved ? "输入访问密码" : "设置访问密码";
-      $("authHelp").textContent = saved ? "输入正确密码后进入学习工具。" : "首次打开请设置一个只有你知道的密码。";
-      $("authSubmit").textContent = saved ? "进入" : "设置并进入";
-      $("authSubmit").addEventListener("click", handleAuthSubmit);
-      $("authPassword").addEventListener("keydown", (event) => {
-        if (event.key === "Enter") handleAuthSubmit();
-      });
-      $("authReset").addEventListener("click", () => {
-        if (!confirm("只会清除本机保存的访问密码，不会删除学习数据。确定重置吗？")) return;
-        localStorage.removeItem(AUTH_KEY);
-        location.reload();
-      });
-      if (!saved) $("authPassword").focus();
-    }
-
-    async function handleAuthSubmit() {
-      const value = $("authPassword").value;
-      if (value.length < 4) {
-        $("authMessage").textContent = "密码至少 4 位。";
-        $("authMessage").className = "result bad";
-        return;
-      }
-      const hashed = await hashPassword(value);
-      const saved = localStorage.getItem(AUTH_KEY);
-      if (!saved) {
-        localStorage.setItem(AUTH_KEY, hashed);
-        unlockApp();
-        return;
-      }
-      if (hashed === saved) {
-        unlockApp();
-      } else {
-        $("authMessage").textContent = "密码不正确。";
-        $("authMessage").className = "result bad";
-      }
-    }
-
-    function unlockApp() {
-      $("authScreen").classList.add("hidden");
-      $("appShell").classList.remove("locked");
-    }
-
     function normalize(text) {
       return String(text || "").toLowerCase().replace(/[.,!?;:'"“”‘’。！？；：，、]/g, "").replace(/\s+/g, " ").trim();
     }
@@ -1495,8 +1431,14 @@
     $("pronCustomText").addEventListener("input", updatePronTarget);
     $("useSelectedWordBtn").addEventListener("click", useSelectedWordForPron);
     $("speakTargetBtn").addEventListener("click", () => speak(selectedPronTarget().en || "", { expressive: selectedPronTarget().en.includes(" ") }));
-    $("recordPronBtn").addEventListener("click", startPronPractice);
-    $("stopPronBtn").addEventListener("click", stopPronPractice);
+    $("voiceHoldBtn").addEventListener("mousedown", beginVoiceHold);
+    $("voiceHoldBtn").addEventListener("mouseup", endVoiceHold);
+    $("voiceHoldBtn").addEventListener("mouseleave", (event) => {
+      if ($("voiceHoldBtn").classList.contains("recording")) endVoiceHold(event);
+    });
+    $("voiceHoldBtn").addEventListener("touchstart", beginVoiceHold, { passive: false });
+    $("voiceHoldBtn").addEventListener("touchend", endVoiceHold, { passive: false });
+    $("voiceHoldBtn").addEventListener("touchcancel", endVoiceHold, { passive: false });
     $("exportBtn").addEventListener("click", exportData);
     $("importBtn").addEventListener("click", () => $("fileInput").click());
     $("fileInput").addEventListener("change", (event) => {
@@ -1510,7 +1452,6 @@
 
     renderTabs();
     renderAll();
-    initAuth();
   </script>
 </body>
 </html>
