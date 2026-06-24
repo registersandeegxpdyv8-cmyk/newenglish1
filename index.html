@@ -367,6 +367,36 @@
       transition: width .2s ease;
     }
 
+    .auth-screen {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 22px;
+      background: var(--bg);
+    }
+
+    .auth-box {
+      width: min(420px, 100%);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+
+    .auth-box h1 {
+      margin: 0 0 8px;
+      font-size: 22px;
+    }
+
+    .auth-box p {
+      margin: 0 0 14px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .locked { display: none !important; }
+
     .reading-text {
       white-space: pre-wrap;
       line-height: 1.9;
@@ -423,6 +453,13 @@
       min-height: 70px;
     }
 
+    .grammar-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
     .stats {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -450,24 +487,67 @@
     @media (max-width: 900px) {
       .app { grid-template-columns: 1fr; }
       aside {
-        position: static;
+        position: sticky;
+        z-index: 5;
         height: auto;
-        max-height: 340px;
+        max-height: none;
+        top: 0;
         border-right: 0;
         border-bottom: 1px solid var(--line);
+        padding: 12px;
       }
-      main { padding: 16px; }
+      main { padding: 12px; }
+      .brand { margin-bottom: 10px; }
+      .brand h1 { font-size: 18px; }
+      .lesson-list {
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+        padding-bottom: 4px;
+      }
+      .lesson-item {
+        grid-template-columns: 34px minmax(78px, 120px);
+        min-width: 150px;
+      }
+      .lesson-item .badge { display: none; }
+      .tabs {
+        position: sticky;
+        top: 126px;
+        z-index: 4;
+        background: var(--bg);
+        margin: 0 -12px 14px;
+        padding: 0 12px;
+      }
+      .tab { min-width: auto; padding: 11px 8px 9px; }
       .grid { grid-template-columns: 1fr; }
       .topbar { flex-direction: column; }
       .actions { justify-content: flex-start; }
       .stats { grid-template-columns: 1fr; }
       .word-row { grid-template-columns: 1fr; }
       .vocab-grid { grid-template-columns: 1fr; }
+      .panel { padding: 12px; box-shadow: none; }
+      .reading-text { font-size: 16px; min-height: 180px; padding: 12px; }
+      .title-block h2 { font-size: 24px; }
+      button { min-height: 42px; }
     }
   </style>
 </head>
 <body>
-  <div class="app">
+  <div class="auth-screen" id="authScreen">
+    <div class="auth-box">
+      <h1 id="authTitle">访问密码</h1>
+      <p id="authHelp">首次打开请设置一个只有你知道的密码。</p>
+      <label for="authPassword">密码</label>
+      <input id="authPassword" type="password" autocomplete="current-password" placeholder="输入密码">
+      <div class="tools-row" style="margin-top: 14px;">
+        <button id="authSubmit" class="primary">进入</button>
+        <button id="authReset" class="warn" title="清除本机保存的密码">重置本机密码</button>
+      </div>
+      <div class="result" id="authMessage"></div>
+    </div>
+  </div>
+
+  <div class="app locked" id="appShell">
     <aside>
       <div class="brand">
         <div>
@@ -502,6 +582,7 @@
       <div class="tabs" role="tablist">
         <button class="tab active" data-tab="read">课文</button>
         <button class="tab" data-tab="vocab">单词测验</button>
+        <button class="tab" data-tab="pron">跟读</button>
         <button class="tab" data-tab="grammar">语法练习</button>
         <button class="tab" data-tab="review">复习</button>
       </div>
@@ -563,18 +644,32 @@
             <button id="checkQuizBtn">批改</button>
           </div>
           <div id="vocabCards" class="vocab-grid"></div>
-          <div class="practice-box">
-            <h3>发音练习</h3>
+          <div id="quizArea"></div>
+        </div>
+      </section>
+
+      <section id="tab-pron" class="tab-page hidden">
+        <div class="grid">
+          <div class="panel">
+            <h3>跟读纠音</h3>
+            <label for="pronWordSelect">本课单词</label>
+            <select id="pronWordSelect" title="选择要练习的单词"></select>
+            <label for="pronCustomText">也可以输入任意单词或句子</label>
+            <textarea id="pronCustomText" placeholder="例如：apple / Is this your handbag?"></textarea>
             <div class="tools-row">
-              <select id="pronWordSelect" title="选择要练习的单词"></select>
+              <button id="useSelectedWordBtn">使用选中单词</button>
               <button id="speakTargetBtn">听标准音</button>
               <button id="recordPronBtn" class="primary">开始跟读</button>
+              <button id="stopPronBtn">停止</button>
             </div>
-            <div class="hint" id="pronTarget">选择一个单词，然后点击开始跟读。</div>
+            <div class="hint" id="pronTarget">选择一个单词，或输入任意句子，然后点击开始跟读。</div>
             <div class="meter"><span id="pronMeter"></span></div>
             <div class="result feedback-list" id="pronFeedback"></div>
           </div>
-          <div id="quizArea"></div>
+          <div class="panel">
+            <h3>纠音记录</h3>
+            <div id="pronHistory" class="reading-text">还没有跟读记录。</div>
+          </div>
         </div>
       </section>
 
@@ -609,6 +704,9 @@
   <script>
     const TOTAL_LESSONS = 144;
     const STORAGE_KEY = "nce1_lesson_tool_v5";
+    const AUTH_KEY = "nce1_auth_hash_v1";
+    let activeRecognition = null;
+    let pronAttempts = 0;
     const initialLessons = Array.from({ length: TOTAL_LESSONS }, (_, index) => ({
       id: index + 1,
       title: `Lesson ${index + 1}`,
@@ -812,9 +910,19 @@
           <textarea data-grammar-user="${index}">${escapeHtml(task.user || "")}</textarea>
           <label>参考答案或老师补充</label>
           <textarea data-grammar-answer="${index}">${escapeHtml(task.answer || "")}</textarea>
+          <div class="grammar-actions">
+            <button data-check-grammar="${index}" class="primary">检查本题</button>
+            <button data-delete-grammar="${index}" class="warn">删除本题</button>
+          </div>
           <div class="result feedback-list" data-grammar-result="${index}"></div>
         </div>
       `).join("");
+      document.querySelectorAll("[data-check-grammar]").forEach((btn) => {
+        btn.addEventListener("click", () => checkGrammarItem(Number(btn.dataset.checkGrammar)));
+      });
+      document.querySelectorAll("[data-delete-grammar]").forEach((btn) => {
+        btn.addEventListener("click", () => deleteGrammarItem(Number(btn.dataset.deleteGrammar)));
+      });
     }
 
     function persistGrammar() {
@@ -889,13 +997,31 @@
     function checkGrammar() {
       persistGrammar();
       lesson().grammar.forEach((task, index) => {
-        const result = document.querySelector(`[data-grammar-result="${index}"]`);
-        const feedback = grammarFeedback(task, lesson().grammarPoint);
-        const ok = feedback.ok;
-        result.innerHTML = feedback.messages.map((msg) => `<div>${escapeHtml(msg)}</div>`).join("");
-        result.className = `result ${ok ? "ok" : "bad"}`;
+        showGrammarFeedback(task, index);
       });
       saveData(false);
+    }
+
+    function checkGrammarItem(index) {
+      persistGrammar();
+      const task = lesson().grammar[index];
+      if (!task) return;
+      showGrammarFeedback(task, index);
+      saveData(false);
+    }
+
+    function showGrammarFeedback(task, index) {
+      const result = document.querySelector(`[data-grammar-result="${index}"]`);
+      if (!result) return;
+      const feedback = grammarFeedback(task, lesson().grammarPoint);
+      result.innerHTML = feedback.messages.map((msg) => `<div>${escapeHtml(msg)}</div>`).join("");
+      result.className = `result ${feedback.ok ? "ok" : "bad"} feedback-list`;
+    }
+
+    function deleteGrammarItem(index) {
+      persistGrammar();
+      lesson().grammar.splice(index, 1);
+      saveData();
     }
 
     function addWord() {
@@ -1122,43 +1248,86 @@
       return normalizeWordObject(lesson().words[index] || lesson().words[0] || {});
     }
 
+    function selectedPronTarget() {
+      const custom = $("pronCustomText").value.trim();
+      if (custom) return { en: custom, phonetic: "", pos: "", cn: "自定义跟读" };
+      return selectedPronWord();
+    }
+
     function updatePronTarget() {
-      const word = selectedPronWord();
+      const word = selectedPronTarget();
       $("pronTarget").textContent = word.en
-        ? `目标：${word.en}${word.phonetic ? ` /${word.phonetic}/` : ""} ${posLabel(word.pos)}：${word.cn || ""}`
-        : "这一课还没有可练习的单词。";
+        ? `目标：${word.en}${word.phonetic ? ` /${word.phonetic}/` : ""}${word.cn && word.cn !== "自定义跟读" ? ` ${posLabel(word.pos)}：${word.cn}` : ""}`
+        : "选择一个单词，或输入任意单词/句子。";
       $("pronMeter").style.width = "0%";
       $("pronFeedback").textContent = "";
     }
 
+    function useSelectedWordForPron() {
+      const word = selectedPronWord();
+      $("pronCustomText").value = word.en || "";
+      updatePronTarget();
+    }
+
     function startPronPractice() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      const word = selectedPronWord();
-      if (!word.en) return;
+      const word = selectedPronTarget();
+      if (!word.en) {
+        $("pronFeedback").textContent = "先选择一个单词，或输入你想跟读的句子。";
+        $("pronFeedback").className = "result bad feedback-list";
+        return;
+      }
       if (!SpeechRecognition) {
         $("pronFeedback").innerHTML = "当前浏览器不支持语音识别。建议用 Chrome 或 Edge 打开，并允许麦克风权限。";
         $("pronFeedback").className = "result bad feedback-list";
         return;
       }
+      if (activeRecognition) activeRecognition.stop();
       const recognition = new SpeechRecognition();
+      activeRecognition = recognition;
       recognition.lang = "en-US";
       recognition.interimResults = false;
       recognition.maxAlternatives = 5;
-      $("pronFeedback").textContent = "正在听，请读这个单词。";
+      pronAttempts = 0;
+      $("pronFeedback").textContent = "正在听，请读目标内容。";
       $("pronFeedback").className = "result feedback-list";
       recognition.onresult = (event) => {
+        pronAttempts += 1;
         const alternatives = Array.from(event.results[0] || []).map((item) => item.transcript);
         const best = alternatives[0] || "";
         const feedback = pronunciationFeedback(word, best, alternatives);
         $("pronMeter").style.width = `${feedback.score}%`;
         $("pronFeedback").innerHTML = feedback.messages.map((msg) => `<div>${escapeHtml(msg)}</div>`).join("");
         $("pronFeedback").className = `result ${feedback.score >= 80 ? "ok" : "bad"} feedback-list`;
+        addPronHistory(word.en, best, feedback.score);
+        if (feedback.score < 85 && activeRecognition === recognition) {
+          setTimeout(() => {
+            $("pronFeedback").innerHTML += `<div>再来一次，我继续听，直到能识别出来。</div>`;
+            try { recognition.start(); } catch {}
+          }, 850);
+        }
       };
       recognition.onerror = (event) => {
         $("pronFeedback").textContent = `没有听清：${event.error || "请检查麦克风权限"}`;
         $("pronFeedback").className = "result bad feedback-list";
+        if (event.error === "no-speech" && activeRecognition === recognition) {
+          setTimeout(() => { try { recognition.start(); } catch {} }, 900);
+        }
+      };
+      recognition.onend = () => {
+        if (activeRecognition === recognition && $("pronFeedback").textContent.includes("正在听")) {
+          try { recognition.start(); } catch {}
+        }
       };
       recognition.start();
+    }
+
+    function stopPronPractice() {
+      if (activeRecognition) {
+        activeRecognition.stop();
+        activeRecognition = null;
+      }
+      $("pronFeedback").innerHTML += `<div>已停止跟读。</div>`;
     }
 
     function pronunciationFeedback(word, heard, alternatives) {
@@ -1173,6 +1342,11 @@
         messages.push(...phoneticTips(word.phonetic, word.en));
       }
       return { score, messages };
+    }
+
+    function addPronHistory(target, heard, score) {
+      const current = $("pronHistory").textContent === "还没有跟读记录。" ? "" : $("pronHistory").textContent + "\n";
+      $("pronHistory").textContent = `${current}${new Date().toLocaleTimeString()} 目标：${target} | 听到：${heard || "未识别"} | ${score}%`;
     }
 
     function phoneticTips(phonetic, word) {
@@ -1222,6 +1396,64 @@
       return dp[a.length][b.length];
     }
 
+    async function hashPassword(value) {
+      if (!crypto?.subtle) {
+        let hash = 2166136261;
+        for (let index = 0; index < value.length; index++) {
+          hash ^= value.charCodeAt(index);
+          hash = Math.imul(hash, 16777619);
+        }
+        return `fallback-${(hash >>> 0).toString(16)}`;
+      }
+      const data = new TextEncoder().encode(value);
+      const digest = await crypto.subtle.digest("SHA-256", data);
+      return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    }
+
+    async function initAuth() {
+      const saved = localStorage.getItem(AUTH_KEY);
+      $("authTitle").textContent = saved ? "输入访问密码" : "设置访问密码";
+      $("authHelp").textContent = saved ? "输入正确密码后进入学习工具。" : "首次打开请设置一个只有你知道的密码。";
+      $("authSubmit").textContent = saved ? "进入" : "设置并进入";
+      $("authSubmit").addEventListener("click", handleAuthSubmit);
+      $("authPassword").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") handleAuthSubmit();
+      });
+      $("authReset").addEventListener("click", () => {
+        if (!confirm("只会清除本机保存的访问密码，不会删除学习数据。确定重置吗？")) return;
+        localStorage.removeItem(AUTH_KEY);
+        location.reload();
+      });
+      if (!saved) $("authPassword").focus();
+    }
+
+    async function handleAuthSubmit() {
+      const value = $("authPassword").value;
+      if (value.length < 4) {
+        $("authMessage").textContent = "密码至少 4 位。";
+        $("authMessage").className = "result bad";
+        return;
+      }
+      const hashed = await hashPassword(value);
+      const saved = localStorage.getItem(AUTH_KEY);
+      if (!saved) {
+        localStorage.setItem(AUTH_KEY, hashed);
+        unlockApp();
+        return;
+      }
+      if (hashed === saved) {
+        unlockApp();
+      } else {
+        $("authMessage").textContent = "密码不正确。";
+        $("authMessage").className = "result bad";
+      }
+    }
+
+    function unlockApp() {
+      $("authScreen").classList.add("hidden");
+      $("appShell").classList.remove("locked");
+    }
+
     function normalize(text) {
       return String(text || "").toLowerCase().replace(/[.,!?;:'"“”‘’。！？；：，、]/g, "").replace(/\s+/g, " ").trim();
     }
@@ -1260,8 +1492,11 @@
     $("speakTextBtn").addEventListener("click", () => speak(lesson().text || "", { expressive: true }));
     $("speakGrammarBtn").addEventListener("click", () => speak(grammarExampleFor(lesson().grammarPoint)));
     $("pronWordSelect").addEventListener("change", updatePronTarget);
-    $("speakTargetBtn").addEventListener("click", () => speak(selectedPronWord().en || ""));
+    $("pronCustomText").addEventListener("input", updatePronTarget);
+    $("useSelectedWordBtn").addEventListener("click", useSelectedWordForPron);
+    $("speakTargetBtn").addEventListener("click", () => speak(selectedPronTarget().en || "", { expressive: selectedPronTarget().en.includes(" ") }));
     $("recordPronBtn").addEventListener("click", startPronPractice);
+    $("stopPronBtn").addEventListener("click", stopPronPractice);
     $("exportBtn").addEventListener("click", exportData);
     $("importBtn").addEventListener("click", () => $("fileInput").click());
     $("fileInput").addEventListener("change", (event) => {
@@ -1275,6 +1510,7 @@
 
     renderTabs();
     renderAll();
+    initAuth();
   </script>
 </body>
 </html>
